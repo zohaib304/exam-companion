@@ -9,7 +9,6 @@ fn main() {
         .application_id(APP_ID)
         .build();
 
-    app.set_name("Exam Companion");
     app.connect_activate(build_ui);
     app.run();
 }
