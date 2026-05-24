@@ -43,9 +43,8 @@ pub fn open_csv_import_dialog(
                     return;
                 };
                 match import_student_csv(&path) {
-                    Ok((students, stored_path)) => {
+                    Ok(students) => {
                         state.borrow_mut().students = students;
-                        eprintln!("Imported CSV saved to {}", stored_path.display());
                         on_success();
                     }
                     Err(message) => {
