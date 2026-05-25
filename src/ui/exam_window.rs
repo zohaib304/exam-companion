@@ -13,9 +13,13 @@ pub fn open(app: &Application, state: Rc<RefCell<AppState>>) -> ApplicationWindo
     header.set_decoration_layout(Some("icon:minimize,maximize,close"));
 
     // Read initial exam info from state
-    let (exam_name, duration_secs) = {
+    let (exam_name, duration_secs, notes_text) = {
         let s = state.borrow();
-        (s.exam.name.clone(), s.exam.duration_secs)
+        (
+            s.exam.name.clone(),
+            s.exam.duration_secs,
+            s.exam.notes.clone(),
+        )
     };
 
     // ─── Exam name ────────────────────────────────────────────
@@ -25,6 +29,26 @@ pub fn open(app: &Application, state: Rc<RefCell<AppState>>) -> ApplicationWindo
         .halign(gtk::Align::Center)
         .margin_top(24)
         .build();
+
+    let notes_box = Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(4)
+        .margin_top(8)
+        .margin_bottom(8)
+        .margin_start(24)
+        .margin_end(24)
+        .halign(gtk::Align::Center)
+        .build();
+
+    {
+        let s = state.borrow();
+        for note in &s.exam.notes {
+            notes_box.append(&make_note_label(note));
+        }
+        notes_box.set_visible(!s.exam.notes.is_empty());
+    }
+
+    let notes_box_clone = notes_box.clone();
 
     // ─── Timer ────────────────────────────────────────────────
     let remaining = Rc::new(RefCell::new(duration_secs));
@@ -47,8 +71,21 @@ pub fn open(app: &Application, state: Rc<RefCell<AppState>>) -> ApplicationWindo
     glib::timeout_add_seconds_local(1, move || {
         let s = state_clone.borrow();
         let current_set = s.exam.duration_secs;
-
+        let current_notes = s.exam.notes.clone();
         drop(s);
+
+        // ── Sync notes ────────────────────────────────────────────
+        let current_notes = state_clone.borrow().exam.notes.clone();
+        let rendered = notes_box_clone.observe_children().n_items() as usize;
+        if current_notes.len() != rendered {
+            while let Some(child) = notes_box_clone.first_child() {
+                notes_box_clone.remove(&child);
+            }
+            for note in &current_notes {
+                notes_box_clone.append(&make_note_label(note));
+            }
+            notes_box_clone.set_visible(!current_notes.is_empty());
+        }
 
         // ── Check if professor changed the duration ────────────
         let last = *last_known_clone.borrow();
@@ -78,6 +115,7 @@ pub fn open(app: &Application, state: Rc<RefCell<AppState>>) -> ApplicationWindo
 
     content.append(&header);
     content.append(&exam_label);
+    content.append(&notes_box);
     content.append(&timer_label);
 
     // ─── Window ───────────────────────────────────────────────
@@ -103,4 +141,17 @@ fn format_time(secs: u32) -> String {
     } else {
         format!("{:02}:{:02}", m, s)
     }
+}
+
+
+fn make_note_label(text: &str) -> Label {
+    Label::builder()
+        .label(&format!("• {}", text))
+        .halign(gtk::Align::Center)
+        .justify(gtk::Justification::Center)
+        .wrap(true)
+        .wrap_mode(gtk::pango::WrapMode::Word)
+        .max_width_chars(60)
+        .css_classes(["body", "dim-label"])
+        .build()
 }

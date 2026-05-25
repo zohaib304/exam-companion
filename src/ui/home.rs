@@ -196,7 +196,100 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
         .build();
     timer_card.append(&timer_card_inner);
 
-   
+    // ── Notes Card ────────────────────────────────────────────
+    let notes_title = Label::builder()
+        .label("Exam Notes")
+        .halign(gtk::Align::Start)
+        .css_classes(["title-4"])
+        .margin_bottom(12)
+        .build();
+
+    let notes_hint = Label::builder()
+        .label("Each saved note appears instantly on the exam window.")
+        .halign(gtk::Align::Start)
+        .css_classes(["caption", "dim-label"])
+        .margin_bottom(8)
+        .build();
+
+    let notes_card_inner = Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(4)
+        .margin_top(24)
+        .margin_bottom(24)
+        .margin_start(24)
+        .margin_end(24)
+        .build();
+
+    let notes_entry = Entry::builder()
+        .placeholder_text("Type a note and press Add...")
+        .hexpand(true)
+        .build();
+
+    let add_note_btn = Button::builder()
+        .label("Add")
+        .css_classes(["suggested-action", "pill"])
+        .build();
+
+    let input_row = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(8)
+        .build();
+
+    input_row.append(&notes_entry);
+    input_row.append(&add_note_btn);
+
+    // Notes list box — rows appear here as professor adds notes
+    let notes_list = Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(6)
+        .margin_top(8)
+        .build();
+
+    // Populate existing notes from state on load
+    {
+        let s = state.borrow();
+        for note in &s.exam.notes {
+            append_note_row(&notes_list, note, state.clone());
+        }
+    }
+
+    notes_card_inner.append(&notes_title);
+    notes_card_inner.append(&notes_hint);
+    notes_card_inner.append(&input_row);
+    notes_card_inner.append(&notes_list);
+
+    let notes_card = Box::builder()
+        .orientation(Orientation::Vertical)
+        .css_classes(["card"])
+        .hexpand(true)
+        .vexpand(false)
+        .build();
+    notes_card.append(&notes_card_inner);
+
+    // Shared add action (used by both button and Enter key)
+    let state_for_add = state.clone();
+    let notes_list_for_add = notes_list.clone();
+    let notes_entry_for_add = notes_entry.clone();
+    let add_note = Rc::new(move || {
+        let text = notes_entry_for_add.text().trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        state_for_add.borrow_mut().exam.notes.push(text.clone());
+        append_note_row(&notes_list_for_add, &text, state_for_add.clone());
+        notes_entry_for_add.set_text("");
+    });
+
+    let add_note_for_btn = add_note.clone();
+    add_note_btn.connect_clicked(move |_| {
+        add_note_for_btn();
+    });
+
+    let add_note_for_entry = add_note.clone();
+    notes_entry.connect_activate(move |_| {
+        // fires on Enter key
+        add_note_for_entry();
+    });
 
     // ── Left Column ───────────────────────────────────────────
     let left_column = Box::builder()
@@ -213,6 +306,7 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
     left_column.append(&screen_title);
     left_column.append(&left_card);
     left_column.append(&timer_card);
+    left_column.append(&notes_card);
 
     // ─── RIGHT COLUMN — Students ──────────────────────────────
     let import_btn = Button::builder()
@@ -361,4 +455,40 @@ fn update_stack_page(stack: &Stack, state: &AppState) {
     } else {
         stack.set_visible_child_name("students");
     }
+}
+
+fn append_note_row(list: &Box, text: &str, state: Rc<RefCell<AppState>>) {
+    let row = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(8)
+        .build();
+
+    let note_label = Label::builder()
+        .label(text)
+        .halign(gtk::Align::Start)
+        .hexpand(true)
+        .wrap(true)
+        .wrap_mode(gtk::pango::WrapMode::Word)
+        .build();
+
+    let remove_btn = Button::builder()
+        .icon_name("user-trash-symbolic")
+        .css_classes(["flat", "circular"])
+        .valign(gtk::Align::Center)
+        .build();
+
+    row.append(&note_label);
+    row.append(&remove_btn);
+    list.append(&row);
+
+    let row_ref = row.clone();
+    let text_owned = text.to_string();
+    remove_btn.connect_clicked(move |_| {
+        state.borrow_mut().exam.notes.retain(|n| n != &text_owned);
+        if let Some(parent) = row_ref.parent() {
+            if let Ok(b) = parent.downcast::<Box>() {
+                b.remove(&row_ref);
+            }
+        }
+    });
 }
