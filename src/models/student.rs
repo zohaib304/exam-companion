@@ -6,6 +6,7 @@ pub struct Student {
     pub matriculation_number: String,
     pub birthdate: String,
     pub present: bool,
+    pub in_restroom: bool,
     pub notes: Vec<String>,
 }
 
@@ -16,6 +17,7 @@ impl Student {
             matriculation_number,
             birthdate,
             present: false,
+            in_restroom: false,
             notes: Vec::new(),
         }
     }

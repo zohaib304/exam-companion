@@ -1,11 +1,11 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::{
     Application, ApplicationWindow, HeaderBar, MessageDialog, ResponseAppearance, StatusPage,
 };
-use gtk::{Box, Button, Entry, Label, Orientation, Separator, Stack};
+use gtk::{Box, Button, CheckButton, Entry, Label, Orientation, Separator, Stack};
 
 use crate::models::app_state::AppState;
 use crate::ui::{import, student_list, student_status_message};
@@ -299,6 +299,7 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
         .margin_start(24)
         .margin_end(12)
         .margin_bottom(24)
+        .width_request(180)
         .hexpand(true)
         .vexpand(true)
         .build();
@@ -308,7 +309,7 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
     left_column.append(&timer_card);
     left_column.append(&notes_card);
 
-    // ─── RIGHT COLUMN — Students ──────────────────────────────
+    // ─── MIDDLE COLUMN — Students ─────────────────────────────
     let import_btn = Button::builder()
         .label("Import Student List (CSV)")
         .css_classes(["suggested-action", "pill"])
@@ -324,12 +325,226 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
         .child(&import_btn)
         .build();
 
-    let student_panel = student_list::StudentListPanel::new(state.clone());
+    // ─── RIGHT COLUMN — Details ───────────────────────────────
+    let selected_student_name = Label::builder()
+        .label("Select a student")
+        .halign(gtk::Align::Start)
+        .css_classes(["title-4"])
+        .wrap(true)
+        .build();
+
+    let selected_student_meta = Label::builder()
+        .halign(gtk::Align::Start)
+        .css_classes(["dim-label"])
+        .wrap(true)
+        .build();
+
+    let restroom_toggle = CheckButton::builder().label("Restroom").build();
+
+    restroom_toggle.set_sensitive(false);
+
+    let selected_student_state = Rc::new(RefCell::new(None::<usize>));
+    let updating_details = Rc::new(Cell::new(false));
+
+    let details_title = Label::builder()
+        .label("Details Panel")
+        .halign(gtk::Align::Start)
+        .css_classes(["title-4"])
+        .margin_bottom(12)
+        .build();
+
+    let details_card_inner = Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(8)
+        .margin_top(24)
+        .margin_bottom(24)
+        .margin_start(24)
+        .margin_end(24)
+        .build();
+
+    details_card_inner.append(&details_title);
+    details_card_inner.append(&selected_student_name);
+    details_card_inner.append(&selected_student_meta);
+    details_card_inner.append(&restroom_toggle);
+
+    // ── Student Notes (per-student) ─────────────────────────
+    let student_notes_title = Label::builder()
+        .label("Student Notes")
+        .halign(gtk::Align::Start)
+        .css_classes(["title-4"])
+        .margin_top(8)
+        .margin_bottom(8)
+        .build();
+
+    let student_note_entry = Entry::builder()
+        .placeholder_text("Add a note for this student...")
+        .hexpand(true)
+        .build();
+
+    let student_add_note_btn = Button::builder()
+        .label("Add")
+        .css_classes(["suggested-action", "pill"])
+        .build();
+
+    let student_input_row = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(8)
+        .build();
+    student_input_row.append(&student_note_entry);
+    student_input_row.append(&student_add_note_btn);
+
+    let student_notes_list = Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(6)
+        .margin_top(8)
+        .build();
+
+    details_card_inner.append(&student_notes_title);
+    details_card_inner.append(&student_input_row);
+    details_card_inner.append(&student_notes_list);
+
+    let details_card = Box::builder()
+        .orientation(Orientation::Vertical)
+        .css_classes(["card"])
+        .width_request(360)
+        .hexpand(true)
+        .vexpand(false)
+        .build();
+    details_card.append(&details_card_inner);
+
+    let refresh_details = {
+        let state = state.clone();
+        let selected_student_state = selected_student_state.clone();
+        let selected_student_name = selected_student_name.clone();
+        let selected_student_meta = selected_student_meta.clone();
+        let restroom_toggle = restroom_toggle.clone();
+        let student_notes_list = student_notes_list.clone();
+        let student_note_entry = student_note_entry.clone();
+        let student_add_note_btn = student_add_note_btn.clone();
+        let updating_details = updating_details.clone();
+        Rc::new(move || {
+            updating_details.set(true);
+            let s = state.borrow();
+            let selected_index = *selected_student_state.borrow();
+
+            if let Some(index) = selected_index {
+                if let Some(student) = s.students.get(index) {
+                    selected_student_name.set_text(&student.name);
+                    selected_student_meta.set_text(&format!(
+                        "{} · {}",
+                        student.matriculation_number, student.birthdate
+                    ));
+                    restroom_toggle.set_sensitive(true);
+                    restroom_toggle.set_active(student.in_restroom);
+                    // populate student notes
+                    // clear existing UI rows
+                    if let Some(parent) = student_notes_list.parent() {
+                        // nothing to do; student_notes_list persists
+                    }
+                    // remove all children from notes list
+                    while let Some(child) = student_notes_list.first_child() {
+                        student_notes_list.remove(&child);
+                    }
+                    for (ni, note) in student.notes.iter().enumerate() {
+                        append_student_note_row(&student_notes_list, note, state.clone(), index, ni);
+                    }
+                    student_note_entry.set_text("");
+                    student_add_note_btn.set_sensitive(true);
+                    updating_details.set(false);
+                    return;
+                }
+            }
+
+            selected_student_name.set_text("Select a student");
+            selected_student_meta.set_text("Student details will appear here.");
+            restroom_toggle.set_active(false);
+            restroom_toggle.set_sensitive(false);
+            // clear student notes UI when no selection
+            while let Some(child) = student_notes_list.first_child() {
+                student_notes_list.remove(&child);
+            }
+            student_note_entry.set_text("");
+            student_add_note_btn.set_sensitive(false);
+            updating_details.set(false);
+        })
+    };
+
+    {
+        let selected_student_state = selected_student_state.clone();
+        let state = state.clone();
+        let refresh_details = refresh_details.clone();
+        let updating_details = updating_details.clone();
+        restroom_toggle.connect_toggled(move |toggle| {
+            if updating_details.get() {
+                return;
+            }
+            if let Some(index) = *selected_student_state.borrow() {
+                if let Some(student) = state.borrow_mut().students.get_mut(index) {
+                    student.in_restroom = toggle.is_active();
+                }
+            }
+            refresh_details();
+        });
+    }
+
+    // Student add-note action
+    {
+        let selected_student_state = selected_student_state.clone();
+        let state = state.clone();
+        let student_notes_list = student_notes_list.clone();
+        let student_note_entry_for_add = student_note_entry.clone();
+        let add_closure = Rc::new(move || {
+            let text = student_note_entry_for_add.text().trim().to_string();
+            if text.is_empty() {
+                return;
+            }
+            if let Some(idx) = *selected_student_state.borrow() {
+                state.borrow_mut().students.get_mut(idx).map(|s| s.notes.push(text.clone()));
+                append_student_note_row(&student_notes_list, &text, state.clone(), idx, std::usize::MAX);
+                student_note_entry_for_add.set_text("");
+            }
+        });
+
+        let add_for_btn = add_closure.clone();
+        student_add_note_btn.connect_clicked(move |_| {
+            add_for_btn();
+        });
+
+        let add_for_entry = add_closure.clone();
+        student_note_entry.connect_activate(move |_| {
+            add_for_entry();
+        });
+    }
+
+    let selected_student_state_for_list = selected_student_state.clone();
+    let refresh_details_for_list = refresh_details.clone();
+    let student_panel = student_list::StudentListPanel::new(
+        state.clone(),
+        Rc::new(move |index| {
+            *selected_student_state_for_list.borrow_mut() = index;
+            refresh_details_for_list();
+        }),
+    );
+
+    refresh_details();
 
     let stack = Stack::builder().vexpand(true).hexpand(true).build();
     stack.add_named(&status_page, Some("empty"));
     stack.add_named(student_panel.widget(), Some("students"));
     update_stack_page(&stack, &state.borrow());
+
+    let middle_column = Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(12)
+        .margin_top(24)
+        .margin_start(12)
+        .margin_end(12)
+        .margin_bottom(24)
+        .width_request(360)
+        .hexpand(true)
+        .vexpand(true)
+        .build();
+    middle_column.append(&stack);
 
     let right_column = Box::builder()
         .orientation(Orientation::Vertical)
@@ -338,12 +553,13 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
         .margin_start(12)
         .margin_end(24)
         .margin_bottom(24)
+        .width_request(360)
         .hexpand(true)
         .vexpand(true)
         .build();
-    right_column.append(&stack);
+    right_column.append(&details_card);
 
-    // ─── TWO COLUMN LAYOUT ────────────────────────────────────
+    // ─── THREE COLUMN LAYOUT ─────────────────────────────────
     let separator = Separator::new(Orientation::Vertical);
 
     let columns = Box::builder()
@@ -353,6 +569,8 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
         .build();
 
     columns.append(&left_column);
+    columns.append(&separator);
+    columns.append(&middle_column);
     columns.append(&separator);
     columns.append(&right_column);
 
@@ -485,6 +703,59 @@ fn append_note_row(list: &Box, text: &str, state: Rc<RefCell<AppState>>) {
     let text_owned = text.to_string();
     remove_btn.connect_clicked(move |_| {
         state.borrow_mut().exam.notes.retain(|n| n != &text_owned);
+        if let Some(parent) = row_ref.parent() {
+            if let Ok(b) = parent.downcast::<Box>() {
+                b.remove(&row_ref);
+            }
+        }
+    });
+}
+
+fn append_student_note_row(
+    list: &Box,
+    text: &str,
+    state: Rc<RefCell<AppState>>,
+    student_index: usize,
+    note_index: usize,
+) {
+    let row = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(8)
+        .build();
+
+    let note_label = Label::builder()
+        .label(text)
+        .halign(gtk::Align::Start)
+        .hexpand(true)
+        .wrap(true)
+        .wrap_mode(gtk::pango::WrapMode::Word)
+        .build();
+
+    let remove_btn = Button::builder()
+        .icon_name("user-trash-symbolic")
+        .css_classes(["flat", "circular"])
+        .valign(gtk::Align::Center)
+        .build();
+
+    row.append(&note_label);
+    row.append(&remove_btn);
+    list.append(&row);
+
+    let row_ref = row.clone();
+    let text_owned = text.to_string();
+    remove_btn.connect_clicked(move |_| {
+        let mut s = state.borrow_mut();
+        if let Some(student) = s.students.get_mut(student_index) {
+            if note_index != std::usize::MAX {
+                if note_index < student.notes.len() {
+                    student.notes.remove(note_index);
+                } else {
+                    student.notes.retain(|n| n != &text_owned);
+                }
+            } else {
+                student.notes.retain(|n| n != &text_owned);
+            }
+        }
         if let Some(parent) = row_ref.parent() {
             if let Ok(b) = parent.downcast::<Box>() {
                 b.remove(&row_ref);

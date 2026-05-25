@@ -3,7 +3,8 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::ActionRow;
-use gtk::{Box, CheckButton, Label, ListBox, Orientation, ScrolledWindow, SearchEntry};
+use gtk::{Box, Label, ListBox, Orientation, ScrolledWindow, SearchEntry};
+use gtk::{CheckButton};
 
 use crate::models::app_state::AppState;
 
@@ -13,10 +14,14 @@ pub struct StudentListPanel {
     list_box: ListBox,
     summary_label: Label,
     state: Rc<RefCell<AppState>>,
+    on_selected: Rc<dyn Fn(Option<usize>)>,
 }
 
 impl StudentListPanel {
-    pub fn new(state: Rc<RefCell<AppState>>) -> Rc<Self> {
+    pub fn new(
+        state: Rc<RefCell<AppState>>,
+        on_selected: Rc<dyn Fn(Option<usize>)>,
+    ) -> Rc<Self> {
         let search_entry = SearchEntry::builder()
             .placeholder_text("Search by name, matriculation number, or birthdate…")
             .hexpand(true)
@@ -28,7 +33,7 @@ impl StudentListPanel {
             .build();
 
         let list_box = ListBox::builder()
-            .selection_mode(gtk::SelectionMode::None)
+            .selection_mode(gtk::SelectionMode::Single)
             .css_classes(["boxed-list"])
             .build();
 
@@ -56,11 +61,18 @@ impl StudentListPanel {
             list_box,
             summary_label,
             state,
+            on_selected,
         });
 
         let panel_for_search = panel.clone();
         panel.search_entry.connect_search_changed(move |_| {
             panel_for_search.refresh();
+        });
+
+        let panel_for_selection = panel.clone();
+        panel.list_box.connect_row_selected(move |_, row| {
+            let index = row.and_then(|row| row.widget_name().strip_prefix("student-").and_then(|value| value.parse::<usize>().ok()));
+            (panel_for_selection.on_selected)(index);
         });
 
         panel
@@ -98,6 +110,7 @@ impl StudentListPanel {
                 ))
                 .activatable(false)
                 .build();
+            row.set_widget_name(&format!("student-{index}"));
 
             let present_box = Box::builder()
                 .orientation(Orientation::Horizontal)
@@ -130,6 +143,7 @@ impl StudentListPanel {
 
             present_box.append(&present_check);
             row.add_suffix(&present_box);
+
             self.list_box.append(&row);
         }
     }
