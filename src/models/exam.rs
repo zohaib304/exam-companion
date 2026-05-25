@@ -5,6 +5,7 @@ pub struct Exam {
     pub name: String,
     pub professor: String,
     pub duration_secs: u32,
+    pub notes: Vec<String>,
 }
 
 impl Default for Exam {
@@ -13,6 +14,7 @@ impl Default for Exam {
             name: String::from("Untitled Exam"),
             professor: String::from(""),
             duration_secs: 90 * 60, // 90 minutes
+            notes: Vec::new(),
         }
     }
 }
