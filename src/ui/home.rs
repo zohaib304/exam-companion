@@ -12,10 +12,10 @@ use crate::ui::{import, student_list, student_status_message};
 
 pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
     // ─── HEADER BAR ───────────────────────────────────────────
-    let header = HeaderBar::new();
+    let header: HeaderBar = HeaderBar::new();
     header.set_decoration_layout(Some("icon:minimize,maximize,close"));
 
-    let start_btn = Button::builder()
+    let start_btn: Button = Button::builder()
         .label("Save & Start")
         .css_classes(["suggested-action", "pill"])
         .build();
