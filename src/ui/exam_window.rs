@@ -7,13 +7,14 @@ use gtk::glib;
 use gtk::{Box, Label, Orientation};
 
 use crate::models::app_state::AppState;
+use crate::models::exam_event::EventKind;
 
 pub fn open(app: &Application, state: Rc<RefCell<AppState>>) -> ApplicationWindow {
     let header = HeaderBar::new();
     header.set_decoration_layout(Some("icon:minimize,maximize,close"));
 
     // Read initial exam info from state
-    let (exam_name, duration_secs, notes_text) = {
+    let (exam_name, duration_secs, _notes_text) = {
         let s = state.borrow();
         (
             s.exam.name.clone(),
@@ -71,7 +72,6 @@ pub fn open(app: &Application, state: Rc<RefCell<AppState>>) -> ApplicationWindo
     glib::timeout_add_seconds_local(1, move || {
         let s = state_clone.borrow();
         let current_set = s.exam.duration_secs;
-        let current_notes = s.exam.notes.clone();
         drop(s);
 
         // ── Sync notes ────────────────────────────────────────────
@@ -106,6 +106,12 @@ pub fn open(app: &Application, state: Rc<RefCell<AppState>>) -> ApplicationWindo
             glib::ControlFlow::Continue
         } else {
             timer_label_clone.set_text("Time's Up!");
+            // Log ExamEnded when timer naturally runs out
+            let mut s = state_clone.borrow_mut();
+            if !s.exam_ended {
+                s.exam_ended = true;
+                s.log_event(EventKind::ExamEnded);
+            }
             glib::ControlFlow::Break
         }
     });
@@ -127,6 +133,17 @@ pub fn open(app: &Application, state: Rc<RefCell<AppState>>) -> ApplicationWindo
         .resizable(true)
         .content(&content)
         .build();
+
+    // Log ExamEnded when the exam window is closed manually
+    let state_for_close = state.clone();
+    window.connect_close_request(move |_| {
+        let mut s = state_for_close.borrow_mut();
+        if !s.exam_ended {
+            s.exam_ended = true;
+            s.log_event(EventKind::ExamEnded);
+        }
+        glib::Propagation::Proceed
+    });
 
     window.present();
     window

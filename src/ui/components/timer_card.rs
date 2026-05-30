@@ -3,6 +3,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::{Box, Button, Label, Orientation};
 use crate::models::app_state::AppState;
+use crate::models::exam_event::EventKind;
 
 // Returns the shared duration_mins so home.rs can read it on Start
 pub fn duration_mins(state: Rc<RefCell<AppState>>) -> Rc<RefCell<u32>> {
@@ -39,7 +40,18 @@ pub fn build(state: Rc<RefCell<AppState>>) -> Box {
         let mut m = mins_m.borrow_mut();
         if *m > 90 { *m -= 5; }
         lbl_m.set_text(&format!("{} min", *m));
-        st_m.borrow_mut().exam.duration_secs = *m * 60;
+        let mut s = st_m.borrow_mut();
+        let old_secs = s.exam.duration_secs;
+        s.exam.duration_secs = *m * 60;
+        // Only log as a time extension event when the exam is running
+        if s.timer_running {
+            let added = s.exam.duration_secs as i64 - old_secs as i64;
+            let new_total = s.exam.duration_secs;
+            s.log_event(EventKind::TimeExtended {
+                added_secs: added,
+                new_total_secs: new_total,
+            });
+        }
         btn_m.set_sensitive(*m > 90);
     });
 
@@ -52,7 +64,18 @@ pub fn build(state: Rc<RefCell<AppState>>) -> Box {
         let mut m = mins_p.borrow_mut();
         *m += 5;
         lbl_p.set_text(&format!("{} min", *m));
-        st_p.borrow_mut().exam.duration_secs = *m * 60;
+        let mut s = st_p.borrow_mut();
+        let old_secs = s.exam.duration_secs;
+        s.exam.duration_secs = *m * 60;
+        // Only log as a time extension event when the exam is running
+        if s.timer_running {
+            let added = s.exam.duration_secs as i64 - old_secs as i64;
+            let new_total = s.exam.duration_secs;
+            s.log_event(EventKind::TimeExtended {
+                added_secs: added,
+                new_total_secs: new_total,
+            });
+        }
         btn_p.set_sensitive(true);
     });
 
