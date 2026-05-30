@@ -3,6 +3,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::{Box, Button, Entry, Label, Orientation};
 use crate::models::app_state::AppState;
+use crate::models::exam_event::EventKind;
 
 pub fn build(state: Rc<RefCell<AppState>>) -> Box {
     let title = Label::builder()
@@ -56,7 +57,11 @@ pub fn build(state: Rc<RefCell<AppState>>) -> Box {
         Rc::new(move || {
             let text = entry.text().trim().to_string();
             if text.is_empty() { return; }
-            state.borrow_mut().exam.notes.push(text.clone());
+            {
+                let mut s = state.borrow_mut();
+                s.exam.notes.push(text.clone());
+                s.log_event(EventKind::ExamNoteAdded { note: text.clone() });
+            }
             append_note_row(&list, &text, state.clone());
             entry.set_text("");
         })

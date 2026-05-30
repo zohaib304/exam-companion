@@ -3,7 +3,8 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::{Box, Button, CheckButton, Entry, Label, Orientation};
 use crate::models::app_state::AppState;
-use super::notes_card::append_note_row as append_exam_note;
+use crate::models::exam_event::EventKind;
+
 
 /// Returns (card_widget, on_student_selected_callback)
 pub fn build(state: Rc<RefCell<AppState>>) -> (Box, impl Fn(Option<usize>) + 'static) {
@@ -137,8 +138,22 @@ pub fn build(state: Rc<RefCell<AppState>>) -> (Box, impl Fn(Option<usize>) + 'st
         restroom_toggle.connect_toggled(move |toggle| {
             if updating.get() { return; }
             if let Some(idx) = *selected.borrow() {
-                if let Some(s) = state.borrow_mut().students.get_mut(idx) {
-                    s.in_restroom = toggle.is_active();
+                let mut s = state.borrow_mut();
+                if let Some(student) = s.students.get_mut(idx) {
+                    let is_in = toggle.is_active();
+                    student.in_restroom = is_in;
+                    let event = if is_in {
+                        EventKind::StudentEnteredRestroom {
+                            name: student.name.clone(),
+                            matriculation_number: student.matriculation_number.clone(),
+                        }
+                    } else {
+                        EventKind::StudentLeftRestroom {
+                            name: student.name.clone(),
+                            matriculation_number: student.matriculation_number.clone(),
+                        }
+                    };
+                    s.log_event(event);
                 }
             }
             refresh();
@@ -155,9 +170,21 @@ pub fn build(state: Rc<RefCell<AppState>>) -> (Box, impl Fn(Option<usize>) + 'st
             let text = entry_ref.text().trim().to_string();
             if text.is_empty() { return; }
             if let Some(idx) = *selected.borrow() {
-                state.borrow_mut().students
-                    .get_mut(idx)
-                    .map(|s| s.notes.push(text.clone()));
+                {
+                    let mut s = state.borrow_mut();
+                    if let Some(student) = s.students.get_mut(idx) {
+                        student.notes.push(text.clone());
+                        // Clone what we need before calling log_event to avoid double-borrow
+                        let name = student.name.clone();
+                        let matno = student.matriculation_number.clone();
+                        let _ = student;
+                        s.log_event(EventKind::StudentNoteAdded {
+                            name,
+                            matriculation_number: matno,
+                            note: text.clone(),
+                        });
+                    }
+                }
                 append_student_note_row(&list, &text, state.clone(), idx);
                 entry_ref.set_text("");
             }

@@ -3,9 +3,12 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::{Application, ApplicationWindow, HeaderBar, MessageDialog, ResponseAppearance, StatusPage};
-use gtk::{Box, Button, Orientation, Separator, Stack};
+use gtk::{Box, Button, FileDialog, Orientation, Separator, Stack};
+use gtk::gio;
 
 use crate::models::app_state::AppState;
+use crate::models::exam_event::EventKind;
+use crate::data::export::export_to_markdown;
 use crate::ui::{import, student_list, student_status_message};
 use crate::ui::components::{exam_details_card, timer_card, notes_card, student_details};
 
@@ -14,11 +17,27 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
     let header = HeaderBar::new();
     header.set_decoration_layout(Some("icon:minimize,maximize,close"));
 
+    // Left: mid-exam export (always available, no reset)
+    let export_btn = Button::builder()
+        .label("Export Report")
+        .css_classes(["pill"])
+        .build();
+    header.pack_start(&export_btn);
+
+    // Right: Save & Start  ←→  End Exam  (swapped when exam is running)
     let start_btn = Button::builder()
         .label("Save & Start")
         .css_classes(["suggested-action", "pill"])
         .build();
+
+    let end_btn = Button::builder()
+        .label("End Exam")
+        .css_classes(["destructive-action", "pill"])
+        .visible(false)
+        .build();
+
     header.pack_end(&start_btn);
+    header.pack_end(&end_btn);
 
     // ─── LEFT COLUMN ──────────────────────────────────────────
     let screen_title = gtk::Label::builder()
@@ -28,9 +47,9 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
         .margin_bottom(4)
         .build();
 
-    let left_card  = exam_details_card::build(state.clone());
-    let t_card     = timer_card::build(state.clone());
-    let n_card     = notes_card::build(state.clone());
+    let left_card     = exam_details_card::build(state.clone());
+    let t_card        = timer_card::build(state.clone());
+    let n_card        = notes_card::build(state.clone());
     let duration_mins = timer_card::duration_mins(state.clone());
 
     let left_column = Box::builder()
@@ -119,11 +138,14 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
         .content(&content)
         .build();
 
+    // Shared handle to the student-facing exam window so End Exam can close it
+    let exam_window_handle: Rc<RefCell<Option<ApplicationWindow>>> = Rc::new(RefCell::new(None));
+
     // ─── IMPORT ───────────────────────────────────────────────
     let on_imported = {
-        let stack = stack.clone();
+        let stack         = stack.clone();
         let student_panel = student_panel.clone();
-        let state = state.clone();
+        let state         = state.clone();
         Rc::new(move || {
             update_stack_page(&stack, &state.borrow());
             student_panel.refresh();
@@ -141,27 +163,149 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
         );
     });
 
+    // ─── EXPORT (mid-exam, no reset) ──────────────────────────
+    let state_for_export  = state.clone();
+    let window_for_export = window.clone();
+    export_btn.connect_clicked(move |_| {
+        let md = export_to_markdown(&state_for_export.borrow());
+        open_save_dialog(&window_for_export, md, None);
+    });
+
     // ─── SAVE & START ─────────────────────────────────────────
-    let state_for_start  = state.clone();
-    let window_for_start = window.clone();
-    let app_for_start    = app.clone();
+    {
+        let state_for_start       = state.clone();
+        let window_for_start      = window.clone();
+        let app_for_start         = app.clone();
+        let start_btn_clone       = start_btn.clone();
+        let end_btn_clone         = end_btn.clone();
+        let exam_window_for_start = exam_window_handle.clone();
+        let duration_mins         = duration_mins.clone();
 
-    start_btn.connect_clicked(move |_| {
-        let s = state_for_start.borrow();
-        let error_msg = validate_start(&s);
-        drop(s);
+        start_btn.connect_clicked(move |_| {
+            let s = state_for_start.borrow();
+            let error_msg = validate_start(&s);
+            drop(s);
 
-        if let Some(msg) = error_msg {
-            show_error_dialog(&window_for_start, msg);
+            if let Some(msg) = error_msg {
+                show_error_dialog(&window_for_start, msg);
+                return;
+            }
+
+            let mins = *duration_mins.borrow();
+            {
+                let mut s = state_for_start.borrow_mut();
+                s.exam.duration_secs = mins * 60;
+                s.timer_running = true;
+                s.started_at = Some(chrono::Local::now());
+                s.exam_ended = false;
+                s.log_event(EventKind::ExamStarted);
+            }
+
+            // Swap buttons
+            start_btn_clone.set_visible(false);
+            end_btn_clone.set_visible(true);
+
+            // Open student-facing exam window and keep a handle to it
+            let ew = crate::ui::exam_window::open(&app_for_start, state_for_start.clone());
+            *exam_window_for_start.borrow_mut() = Some(ew);
+        });
+    }
+
+    // ─── END EXAM ─────────────────────────────────────────────
+    {
+        let state_for_end        = state.clone();
+        let window_for_end       = window.clone();
+        let app_for_end          = app.clone();
+        let start_btn_clone      = start_btn.clone();
+        let end_btn_clone        = end_btn.clone();
+        let exam_window_for_end  = exam_window_handle.clone();
+
+        end_btn.connect_clicked(move |_| {
+            show_end_exam_dialog(
+                &window_for_end,
+                &app_for_end,
+                state_for_end.clone(),
+                start_btn_clone.clone(),
+                end_btn_clone.clone(),
+                exam_window_for_end.clone(),
+            );
+        });
+    }
+
+    window.present();
+}
+
+// ─── END EXAM DIALOG ──────────────────────────────────────────────────────────
+
+fn show_end_exam_dialog(
+    home_window: &ApplicationWindow,
+    app: &Application,
+    state: Rc<RefCell<AppState>>,
+    start_btn: Button,
+    end_btn: Button,
+    exam_window_handle: Rc<RefCell<Option<ApplicationWindow>>>,
+) {
+    let dialog = MessageDialog::builder()
+        .transient_for(home_window)
+        .heading("End Exam?")
+        .body("Export the report before ending. Once you confirm the export the exam will end and all data will be reset.")
+        .build();
+
+    dialog.add_response("cancel", "Cancel");
+    dialog.add_response("export_end", "Export & End");
+    dialog.set_default_response(Some("cancel"));
+    dialog.set_response_appearance("export_end", ResponseAppearance::Destructive);
+
+    let home_window = home_window.clone();
+    let app         = app.clone();
+
+    dialog.connect_response(None, move |dlg, response| {
+        dlg.close();
+        if response != "export_end" {
             return;
         }
 
-        let mins = *duration_mins.borrow();
-        state_for_start.borrow_mut().exam.duration_secs = mins * 60;
-        crate::ui::exam_window::open(&app_for_start, state_for_start.clone());
+        // Log ExamEnded before generating the report
+        {
+            let mut s = state.borrow_mut();
+            if !s.exam_ended {
+                s.exam_ended = true;
+                s.log_event(EventKind::ExamEnded);
+            }
+        }
+
+        let md                   = export_to_markdown(&state.borrow());
+        let state_for_save       = state.clone();
+        let home_window_for_save = home_window.clone();
+        let app_for_save         = app.clone();
+        let start_btn_for_save   = start_btn.clone();
+        let end_btn_for_save     = end_btn.clone();
+        let exam_win_for_save    = exam_window_handle.clone();
+
+        // on_saved callback — only runs after a successful file write
+        let on_saved = move || {
+            // Close student-facing window
+            if let Some(ew) = exam_win_for_save.borrow().as_ref() {
+                ew.close();
+            }
+            *exam_win_for_save.borrow_mut() = None;
+
+            // Reset all state
+            state_for_save.borrow_mut().reset();
+
+            // Swap buttons back
+            end_btn_for_save.set_visible(false);
+            start_btn_for_save.set_visible(true);
+
+            // Close the current home window and reopen fresh
+            home_window_for_save.close();
+            crate::ui::home::build(&app_for_save, state_for_save.clone());
+        };
+
+        open_save_dialog(&home_window, md, Some(Rc::new(on_saved)));
     });
 
-    window.present();
+    dialog.present();
 }
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -199,5 +343,57 @@ fn show_error_dialog(window: &ApplicationWindow, msg: &str) {
     dialog.add_response("ok", "OK");
     dialog.set_default_response(Some("ok"));
     dialog.set_response_appearance("ok", ResponseAppearance::Suggested);
+    dialog.present();
+}
+
+/// Open a native save-file dialog and write the markdown content to the chosen path.
+/// `on_saved` is called only after a successful write (used by End Exam to trigger reset).
+/// When `on_saved` is None (mid-exam export) nothing extra happens after saving.
+fn open_save_dialog(
+    window: &ApplicationWindow,
+    md: String,
+    on_saved: Option<Rc<dyn Fn()>>,
+) {
+    let dialog = FileDialog::builder()
+        .title("Export Exam Report")
+        .initial_name("exam_report.md")
+        .build();
+
+    let window_ref = window.clone();
+    dialog.save(
+        Some(&window.clone()),
+        None::<&gio::Cancellable>,
+        move |result| {
+            let file = match result {
+                Ok(f) => f,
+                Err(_) => return, // user cancelled — exam keeps running
+            };
+            let path = match file.path() {
+                Some(p) => p,
+                None => {
+                    show_save_error(&window_ref, "Could not determine the save path.");
+                    return;
+                }
+            };
+            if let Err(e) = std::fs::write(&path, md.as_bytes()) {
+                show_save_error(&window_ref, &format!("Failed to write file:\n{e}"));
+                return;
+            }
+            // File written successfully — trigger reset if this was an End Exam export
+            if let Some(cb) = &on_saved {
+                cb();
+            }
+        },
+    );
+}
+
+fn show_save_error(window: &ApplicationWindow, msg: &str) {
+    let dialog = MessageDialog::builder()
+        .transient_for(window)
+        .heading("Export Failed")
+        .body(msg)
+        .build();
+    dialog.add_response("ok", "OK");
+    dialog.set_default_response(Some("ok"));
     dialog.present();
 }
