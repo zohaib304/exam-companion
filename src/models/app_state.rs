@@ -16,7 +16,7 @@ impl Default for AppState {
         }
     }
 }
-
+ 
 impl AppState {
     /// Indices of students matching the query (name, matriculation number, or birthdate).
     pub fn matching_student_indices(&self, query: &str) -> Vec<usize> {
