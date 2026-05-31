@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use adw::prelude::*;
-use gtk::{Box, Button, Entry, Label, Orientation};
+use gtk::{Box, Button, Entry, Label, Orientation, ScrolledWindow};
 use crate::models::app_state::AppState;
 use crate::models::exam_event::EventKind;
 
@@ -43,6 +43,12 @@ pub fn build(state: Rc<RefCell<AppState>>) -> Box {
         .margin_top(8)
         .build();
 
+    let scroll = ScrolledWindow::builder()
+        .min_content_height(150)
+        .vexpand(true)
+        .child(&list)
+        .build();
+
     {
         let s = state.borrow();
         for note in &s.exam.notes {
@@ -81,7 +87,7 @@ pub fn build(state: Rc<RefCell<AppState>>) -> Box {
     inner.append(&title);
     inner.append(&hint);
     inner.append(&input_row);
-    inner.append(&list);
+    inner.append(&scroll);
 
     super::exam_details_card::wrap_in_card(inner)
 }

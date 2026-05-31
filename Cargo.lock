@@ -628,6 +628,7 @@ dependencies = [
 name = "rust_summer26_05"
 version = "0.1.0"
 dependencies = [
+ "cairo-rs",
  "chrono",
  "gtk4",
  "libadwaita",
