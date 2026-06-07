@@ -7,6 +7,7 @@ pub struct Student {
     pub birthdate: String,
     pub present: bool,
     pub in_restroom: bool,
+    pub restroom_entered_at: Option<chrono::DateTime<chrono::Local>>,
     pub notes: Vec<String>,
 }
 
@@ -18,6 +19,7 @@ impl Student {
             birthdate,
             present: false,
             in_restroom: false,
+            restroom_entered_at: None,
             notes: Vec::new(),
         }
     }

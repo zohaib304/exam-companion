@@ -10,7 +10,8 @@ use adw::Application;
 
 use models::app_state::AppState;
 
-const APP_ID: &str = "com.example.ExamCompanion";
+const APP_ID: &str = "com.exa
+mple.ExamCompanion";
 
 fn main() {
     let state = Rc::new(RefCell::new(AppState::default()));

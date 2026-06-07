@@ -105,10 +105,36 @@ pub fn open(app: &Application, state: Rc<RefCell<AppState>>) -> ApplicationWindo
         .margin_bottom(30)
         .build();
 
+        // ─── Progress Ring ────────────────────────────────────────
+    let progress_ring = DrawingArea::builder()
+        .width_request(150)
+        .height_request(150)
+        .build();
+
+    let remaining_for_ring = remaining.clone();
+    progress_ring.set_draw_func(move |_, cr: &Context, width, height| {
+        let secs = *remaining_for_ring.borrow();
+        let progress = secs as f64 / total_duration.max(1) as f64;
+        let center_x = width as f64 / 2.0;
+        let center_y = height as f64 / 2.0;
+        let radius = 55.0;
+        cr.set_source_rgb(0.88, 0.92, 1.0);
+        cr.set_line_width(12.0);
+        cr.arc(center_x, center_y, radius, 0.0, 2.0 * PI);
+        cr.stroke().unwrap();
+        cr.set_source_rgb(0.13, 0.39, 0.96);
+        cr.set_line_width(12.0);
+        cr.arc(center_x, center_y, radius, -PI / 2.0, (-PI / 2.0) + (2.0 * PI * progress));
+        cr.stroke().unwrap();
+        cr.set_source_rgb(0.13, 0.39, 0.96);
+        cr.arc(center_x, center_y, 6.0, 0.0, 2.0 * PI);
+        cr.fill().unwrap();
+    });
+
     // ─── Ticker ───────────────────────────────────────────────
     let timer_label_clone = timer_label.clone();
     let remaining_clone = remaining.clone();
-    //let progress_ring_clone = progress_ring.clone();
+    let progress_ring_clone = progress_ring.clone();
     let last_known_clone = last_known.clone();
     let state_clone = state.clone();
 
@@ -146,6 +172,7 @@ pub fn open(app: &Application, state: Rc<RefCell<AppState>>) -> ApplicationWindo
         if *secs > 0 {
             *secs -= 1;
             timer_label_clone.set_text(&format_time(*secs));
+            progress_ring_clone.queue_draw();
 
             glib::ControlFlow::Continue
         } else {
@@ -209,59 +236,14 @@ pub fn open(app: &Application, state: Rc<RefCell<AppState>>) -> ApplicationWindo
         .valign(gtk::Align::Center)
         .build();
 
-    let progress_ring = DrawingArea::builder()
-        .width_request(150)
-        .height_request(150)
-        .build();
+        let ring_box = Box::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(10)
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .build();
 
-    let remaining_clone = remaining.clone();
-    let progress_ring_clone = progress_ring.clone();
-
-    progress_ring.set_draw_func(move |_, cr: &Context, width, height| {
-        let secs = *remaining_clone.borrow();
-
-        let progress =
-        secs as f64 / total_duration.max(1) as f64;
-        println!("secs={} progress={}", secs, progress);
-
-        let center_x = width as f64 / 2.0;
-        let center_y = height as f64 / 2.0;
-        let radius = 55.0;
-
-        cr.set_source_rgb(0.88, 0.92, 1.0);
-        cr.set_line_width(12.0);
-
-        cr.arc(center_x, center_y, radius, 0.0, 2.0 * PI);
-        cr.stroke().unwrap();
-
-        cr.set_source_rgb(0.13, 0.39, 0.96);
-        cr.set_line_width(12.0);
-
-        cr.arc(
-            center_x,
-            center_y,
-            radius,
-            -PI / 2.0,
-            (-PI / 2.0) + (2.0 * PI * progress),
-        );
-
-        cr.stroke().unwrap();
-
-        cr.set_source_rgb(0.13, 0.39, 0.96);
-
-        cr.arc(center_x, center_y, 6.0, 0.0, 2.0 * PI);
-
-        cr.fill().unwrap();
-    });
-
-    let ring_box = Box::builder()
-        .orientation(Orientation::Vertical)
-        .spacing(10)
-        .halign(gtk::Align::Center)
-        .valign(gtk::Align::Center)
-        .build();
-
-    ring_box.append(&progress_ring);
+        ring_box.append(&progress_ring);
 
     let timer_text_box = Box::builder()
         .orientation(Orientation::Vertical)
