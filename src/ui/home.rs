@@ -138,6 +138,8 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
         .content(&content)
         .build();
 
+    window.set_maximized(false);
+
     // Shared handle to the student-facing exam window so End Exam can close it
     let exam_window_handle: Rc<RefCell<Option<ApplicationWindow>>> = Rc::new(RefCell::new(None));
 

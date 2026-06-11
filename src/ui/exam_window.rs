@@ -4,31 +4,64 @@ use std::rc::Rc;
 use adw::prelude::*;
 use adw::{Application, ApplicationWindow, HeaderBar};
 use gtk::glib;
-use gtk::{Box, Label, Orientation};
+use gtk::{Box, Label, Orientation, Separator};
 
 use crate::models::app_state::AppState;
 use crate::models::exam_event::EventKind;
+use gtk::DrawingArea;
+use cairo::Context;
+use std::f64::consts::PI;
 
 pub fn open(app: &Application, state: Rc<RefCell<AppState>>) -> ApplicationWindow {
     let header = HeaderBar::new();
     header.set_decoration_layout(Some("icon:minimize,maximize,close"));
 
     // Read initial exam info from state
-    let (exam_name, duration_secs, _notes_text) = {
+    let (exam_name, professor_name, duration_secs) = {
         let s = state.borrow();
         (
             s.exam.name.clone(),
+            s.exam.professor.clone(),
             s.exam.duration_secs,
-            s.exam.notes.clone(),
         )
     };
 
     // ─── Exam name ────────────────────────────────────────────
-    let exam_label = Label::builder()
+    let course_title = Label::builder()
+        .label("Course")
+        .css_classes(["heading"])
+        .halign(gtk::Align::Start)
+        .margin_start(40)
+        .margin_top(20)
+        .build();
+
+    let course_value = Label::builder()
         .label(&exam_name)
-        .css_classes(["title-4", "dim-label"])
-        .halign(gtk::Align::Center)
-        .margin_top(24)
+        .css_classes(["title-3"])
+        .halign(gtk::Align::Start)
+        .margin_start(40)
+        .build();
+
+    let professor_title = Label::builder()
+        .label("Professor")
+        .css_classes(["heading"])
+        .halign(gtk::Align::Start)
+        .margin_start(40)
+        .margin_top(15)
+        .build();
+
+    let professor_value = Label::builder()
+        .label(&professor_name)
+        .halign(gtk::Align::Start)
+        .margin_start(40)
+        .build();
+
+    let notes_title = Label::builder()
+        .label("Notes")
+        .css_classes(["heading"])
+        .halign(gtk::Align::Start)
+        .margin_start(40)
+        .margin_top(15)
         .build();
 
     let notes_box = Box::builder()
@@ -38,7 +71,7 @@ pub fn open(app: &Application, state: Rc<RefCell<AppState>>) -> ApplicationWindo
         .margin_bottom(8)
         .margin_start(24)
         .margin_end(24)
-        .halign(gtk::Align::Center)
+        .halign(gtk::Align::Start)
         .build();
 
     {
@@ -54,18 +87,54 @@ pub fn open(app: &Application, state: Rc<RefCell<AppState>>) -> ApplicationWindo
     // ─── Timer ────────────────────────────────────────────────
     let remaining = Rc::new(RefCell::new(duration_secs));
     let last_known = Rc::new(RefCell::new(duration_secs));
+    let total_duration = duration_secs;
+
+    let timer_title = Label::builder()
+    .label("Time Remaining")
+    .css_classes(["heading"])
+    .halign(gtk::Align::Center)
+    .build();
 
     let timer_label = Label::builder()
         .label(&format_time(*remaining.borrow()))
-        .css_classes(["title-hero"])
+        .css_classes(["title-1"])
         .halign(gtk::Align::Center)
         .valign(gtk::Align::Center)
-        .vexpand(true)
+        .vexpand(false)
+        .margin_top(30)
+        .margin_bottom(30)
         .build();
+
+        // ─── Progress Ring ────────────────────────────────────────
+    let progress_ring = DrawingArea::builder()
+        .width_request(150)
+        .height_request(150)
+        .build();
+
+    let remaining_for_ring = remaining.clone();
+    progress_ring.set_draw_func(move |_, cr: &Context, width, height| {
+        let secs = *remaining_for_ring.borrow();
+        let progress = secs as f64 / total_duration.max(1) as f64;
+        let center_x = width as f64 / 2.0;
+        let center_y = height as f64 / 2.0;
+        let radius = 55.0;
+        cr.set_source_rgb(0.88, 0.92, 1.0);
+        cr.set_line_width(12.0);
+        cr.arc(center_x, center_y, radius, 0.0, 2.0 * PI);
+        cr.stroke().unwrap();
+        cr.set_source_rgb(0.13, 0.39, 0.96);
+        cr.set_line_width(12.0);
+        cr.arc(center_x, center_y, radius, -PI / 2.0, (-PI / 2.0) + (2.0 * PI * progress));
+        cr.stroke().unwrap();
+        cr.set_source_rgb(0.13, 0.39, 0.96);
+        cr.arc(center_x, center_y, 6.0, 0.0, 2.0 * PI);
+        cr.fill().unwrap();
+    });
 
     // ─── Ticker ───────────────────────────────────────────────
     let timer_label_clone = timer_label.clone();
     let remaining_clone = remaining.clone();
+    let progress_ring_clone = progress_ring.clone();
     let last_known_clone = last_known.clone();
     let state_clone = state.clone();
 
@@ -103,6 +172,8 @@ pub fn open(app: &Application, state: Rc<RefCell<AppState>>) -> ApplicationWindo
         if *secs > 0 {
             *secs -= 1;
             timer_label_clone.set_text(&format_time(*secs));
+            progress_ring_clone.queue_draw();
+
             glib::ControlFlow::Continue
         } else {
             timer_label_clone.set_text("Time's Up!");
@@ -120,16 +191,108 @@ pub fn open(app: &Application, state: Rc<RefCell<AppState>>) -> ApplicationWindo
     let content = Box::builder().orientation(Orientation::Vertical).build();
 
     content.append(&header);
-    content.append(&exam_label);
-    content.append(&notes_box);
-    content.append(&timer_label);
 
+    let left_panel = Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(6)
+        .margin_top(20)
+        .margin_start(20)
+        .build();
+
+    left_panel.append(&course_title);
+    left_panel.append(&course_value);
+
+    left_panel.append(&professor_title);
+    left_panel.append(&professor_value);
+
+    let notes_panel = Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(10)
+        .margin_start(30)
+        .margin_end(30)
+        .width_request(250)
+        .build();
+
+    notes_panel.append(&notes_title);
+    notes_panel.append(&notes_box);
+
+    let timer_panel = gtk::Frame::builder()
+        .hexpand(true)
+        .margin_top(30)
+        .margin_bottom(30)
+        .margin_end(30)
+        .width_request(380)
+        .height_request(260)
+        .build();
+
+    let timer_content = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(30)
+        .margin_top(30)
+        .margin_bottom(30)
+        .margin_start(30)
+        .margin_end(30)
+        .halign(gtk::Align::Center)
+        .valign(gtk::Align::Center)
+        .build();
+
+        let ring_box = Box::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(10)
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .build();
+
+        ring_box.append(&progress_ring);
+
+    let timer_text_box = Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(10)
+        .halign(gtk::Align::Center)
+        .valign(gtk::Align::Center)
+        .build();
+
+    timer_text_box.append(&timer_title);
+    timer_text_box.append(&timer_label);
+
+    timer_content.append(&ring_box);
+    timer_content.append(&timer_text_box);
+
+    timer_panel.set_child(Some(&timer_content));
+
+    let separator = Separator::new(Orientation::Vertical);
+
+    let body = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(20)
+        .margin_top(20)
+        .margin_bottom(20)
+        .margin_start(20)
+        .margin_end(20)
+        .hexpand(true)
+        .build();
+
+    body.append(&left_panel);
+
+    body.append(
+        &Separator::new(Orientation::Vertical)
+    );
+
+    body.append(&notes_panel);
+
+    body.append(
+        &Separator::new(Orientation::Vertical)
+    );
+
+    body.append(&timer_panel);
+
+    content.append(&body);
     // ─── Window ───────────────────────────────────────────────
     let window = ApplicationWindow::builder()
         .application(app)
         .title("Exam in Progress")
-        .default_width(500)
-        .default_height(400)
+        .default_width(1000)
+        .default_height(350)
         .resizable(true)
         .content(&content)
         .build();
