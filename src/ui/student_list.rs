@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -13,8 +14,14 @@ pub struct StudentListPanel {
     search_entry: SearchEntry,
     list_box: ListBox,
     summary_label: Label,
+    rows: RefCell<HashMap<usize, StudentListRow>>,
     state: Rc<RefCell<AppState>>,
     on_selected: Rc<dyn Fn(Option<usize>)>,
+}
+
+struct StudentListRow {
+    row: ActionRow,
+    restroom_badge: Box,
 }
 
 impl StudentListPanel {
@@ -60,6 +67,7 @@ impl StudentListPanel {
             search_entry,
             list_box,
             summary_label,
+            rows: RefCell::new(HashMap::new()),
             state,
             on_selected,
         });
@@ -91,6 +99,7 @@ impl StudentListPanel {
         while let Some(row) = self.list_box.row_at_index(0) {
             self.list_box.remove(&row);
         }
+        self.rows.borrow_mut().clear();
 
         let state = self.state.borrow();
         let indices = state.matching_student_indices(query);
@@ -111,6 +120,21 @@ impl StudentListPanel {
                 .activatable(false)
                 .build();
             row.set_widget_name(&format!("student-{index}"));
+
+            let restroom_badge = Box::builder()
+                .orientation(Orientation::Horizontal)
+                .spacing(4)
+                .valign(gtk::Align::Center)
+                .build();
+
+            let restroom_label = Label::builder()
+                .label("Restroom")
+                .css_classes(["warning"])
+                .build();
+
+            restroom_badge.append(&restroom_label);
+            restroom_badge.set_visible(student.in_restroom);
+            row.add_prefix(&restroom_badge);
 
             let present_box = Box::builder()
                 .orientation(Orientation::Horizontal)
@@ -144,7 +168,31 @@ impl StudentListPanel {
             present_box.append(&present_check);
             row.add_suffix(&present_box);
 
+            self.rows.borrow_mut().insert(
+                index,
+                StudentListRow {
+                    row: row.clone(),
+                    restroom_badge,
+                },
+            );
+
             self.list_box.append(&row);
+        }
+    }
+
+    pub fn update_restroom_indicator(&self, index: usize) {
+        let in_restroom = {
+            let state = self.state.borrow();
+            state.students.get(index).is_some_and(|student| student.in_restroom)
+        };
+
+        if let Some(row_widgets) = self.rows.borrow().get(&index) {
+            row_widgets.restroom_badge.set_visible(in_restroom);
+            if in_restroom {
+                row_widgets.row.add_css_class("suggested-action");
+            } else {
+                row_widgets.row.remove_css_class("suggested-action");
+            }
         }
     }
 }

@@ -7,7 +7,10 @@ use crate::models::exam_event::EventKind;
 
 
 /// Returns (card_widget, on_student_selected_callback)
-pub fn build(state: Rc<RefCell<AppState>>) -> (Box, impl Fn(Option<usize>) + 'static) {
+pub fn build(
+    state: Rc<RefCell<AppState>>,
+    on_student_restroom_changed: Rc<dyn Fn(usize)>,
+) -> (Box, impl Fn(Option<usize>) + 'static) {
     let name_label = Label::builder()
         .label("Select a student")
         .halign(gtk::Align::Start)
@@ -198,6 +201,7 @@ pub fn build(state: Rc<RefCell<AppState>>) -> (Box, impl Fn(Option<usize>) + 'st
                 };
 
                 if event {
+                    on_student_restroom_changed(idx);
                     if let Some((name, entered_at)) = notify {
                         let entered_str = entered_at.format("%H:%M").to_string();
                         let dialog = adw::MessageDialog::builder()
@@ -208,6 +212,9 @@ pub fn build(state: Rc<RefCell<AppState>>) -> (Box, impl Fn(Option<usize>) + 'st
                             ))
                             .build();
                         dialog.add_response("ok", "OK");
+                        dialog.connect_response(None, |dlg, _| {
+                            dlg.close();
+                        });
                         dialog.present();
                     }
                 }
