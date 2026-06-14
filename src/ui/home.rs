@@ -80,12 +80,24 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
         .build();
 
     // ─── RIGHT COLUMN — Student Details ───────────────────────
-    let (details_card, on_student_selected) = student_details::build(state.clone());
+    let student_panel_handle: Rc<RefCell<Option<Rc<student_list::StudentListPanel>>>> =
+        Rc::new(RefCell::new(None));
+
+    let student_panel_handle_for_restroom = student_panel_handle.clone();
+    let (details_card, on_student_selected) = student_details::build(
+        state.clone(),
+        Rc::new(move |index| {
+            if let Some(student_panel) = student_panel_handle_for_restroom.borrow().as_ref() {
+                student_panel.update_restroom_indicator(index);
+            }
+        }),
+    );
 
     let student_panel = student_list::StudentListPanel::new(
         state.clone(),
         Rc::new(move |index| on_student_selected(index)),
     );
+    *student_panel_handle.borrow_mut() = Some(student_panel.clone());
 
     let stack = Stack::builder().vexpand(true).hexpand(true).build();
     stack.add_named(&status_page, Some("empty"));
