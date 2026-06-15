@@ -1,16 +1,30 @@
+use gtk::glib;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use adw::{Application, ApplicationWindow, HeaderBar, MessageDialog, ResponseAppearance, StatusPage};
-use gtk::{Box, Button, FileDialog, Orientation, Separator, Stack};
+use adw::{
+    Application, ApplicationWindow, HeaderBar, MessageDialog, ResponseAppearance, StatusPage,
+};
 use gtk::gio;
+use gtk::{Box, Button, FileDialog, Orientation, Separator, Stack};
 
+use crate::data::export::export_to_markdown;
 use crate::models::app_state::AppState;
 use crate::models::exam_event::EventKind;
-use crate::data::export::export_to_markdown;
+use crate::ui::components::{exam_details_card, notes_card, student_details, timer_card};
 use crate::ui::{import, student_list, student_status_message};
-use crate::ui::components::{exam_details_card, timer_card, notes_card, student_details};
+
+fn get_backup_path() -> std::path::PathBuf {
+    let dir = dirs::desktop_dir() // ~/Desktop
+        .or_else(|| dirs::home_dir()) // ~/ as fallback
+        .unwrap_or_else(|| std::path::PathBuf::from(".")) // cwd as last resort
+        .join("exam-companion-backup");
+
+    std::fs::create_dir_all(&dir).ok();
+
+    dir.join("exam_backup.md")
+}
 
 pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
     // ─── HEADER ───────────────────────────────────────────────
@@ -47,17 +61,21 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
         .margin_bottom(4)
         .build();
 
-    let left_card     = exam_details_card::build(state.clone());
-    let t_card        = timer_card::build(state.clone());
-    let n_card        = notes_card::build(state.clone());
+    let left_card = exam_details_card::build(state.clone());
+    let t_card = timer_card::build(state.clone());
+    let n_card = notes_card::build(state.clone());
     let duration_mins = timer_card::duration_mins(state.clone());
 
     let left_column = Box::builder()
         .orientation(Orientation::Vertical)
         .spacing(12)
-        .margin_top(24).margin_start(24).margin_end(12).margin_bottom(24)
+        .margin_top(24)
+        .margin_start(24)
+        .margin_end(12)
+        .margin_bottom(24)
         .width_request(180)
-        .hexpand(true).vexpand(true)
+        .hexpand(true)
+        .vexpand(true)
         .build();
     left_column.append(&screen_title);
     left_column.append(&left_card);
@@ -95,18 +113,26 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
     let middle_column = Box::builder()
         .orientation(Orientation::Vertical)
         .spacing(12)
-        .margin_top(24).margin_start(12).margin_end(12).margin_bottom(24)
+        .margin_top(24)
+        .margin_start(12)
+        .margin_end(12)
+        .margin_bottom(24)
         .width_request(360)
-        .hexpand(true).vexpand(true)
+        .hexpand(true)
+        .vexpand(true)
         .build();
     middle_column.append(&stack);
 
     let right_column = Box::builder()
         .orientation(Orientation::Vertical)
         .spacing(12)
-        .margin_top(24).margin_start(12).margin_end(24).margin_bottom(24)
+        .margin_top(24)
+        .margin_start(12)
+        .margin_end(24)
+        .margin_bottom(24)
         .width_request(360)
-        .hexpand(true).vexpand(true)
+        .hexpand(true)
+        .vexpand(true)
         .build();
     right_column.append(&details_card);
 
@@ -116,7 +142,8 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
 
     let columns = Box::builder()
         .orientation(Orientation::Horizontal)
-        .hexpand(true).vexpand(true)
+        .hexpand(true)
+        .vexpand(true)
         .build();
     columns.append(&left_column);
     columns.append(&sep1);
@@ -143,9 +170,9 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
 
     // ─── IMPORT ───────────────────────────────────────────────
     let on_imported = {
-        let stack         = stack.clone();
+        let stack = stack.clone();
         let student_panel = student_panel.clone();
-        let state         = state.clone();
+        let state = state.clone();
         Rc::new(move || {
             update_stack_page(&stack, &state.borrow());
             student_panel.refresh();
@@ -153,8 +180,8 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
     };
 
     let window_for_import = window.clone();
-    let state_for_import  = state.clone();
-    let on_imported_btn   = on_imported.clone();
+    let state_for_import = state.clone();
+    let on_imported_btn = on_imported.clone();
     import_btn.connect_clicked(move |_| {
         import::open_csv_import_dialog(
             &window_for_import,
@@ -164,22 +191,24 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
     });
 
     // ─── EXPORT (mid-exam, no reset) ──────────────────────────
-    let state_for_export  = state.clone();
+    let state_for_export = state.clone();
     let window_for_export = window.clone();
+    
     export_btn.connect_clicked(move |_| {
         let md = export_to_markdown(&state_for_export.borrow());
-        open_save_dialog(&window_for_export, md, None);
+        let backup_path = get_backup_path();
+        open_save_dialog(&window_for_export, md, None, Some(backup_path));
     });
 
     // ─── SAVE & START ─────────────────────────────────────────
     {
-        let state_for_start       = state.clone();
-        let window_for_start      = window.clone();
-        let app_for_start         = app.clone();
-        let start_btn_clone       = start_btn.clone();
-        let end_btn_clone         = end_btn.clone();
+        let state_for_start = state.clone();
+        let window_for_start = window.clone();
+        let app_for_start = app.clone();
+        let start_btn_clone = start_btn.clone();
+        let end_btn_clone = end_btn.clone();
         let exam_window_for_start = exam_window_handle.clone();
-        let duration_mins         = duration_mins.clone();
+        let duration_mins = duration_mins.clone();
 
         start_btn.connect_clicked(move |_| {
             let s = state_for_start.borrow();
@@ -205,6 +234,31 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
             start_btn_clone.set_visible(false);
             end_btn_clone.set_visible(true);
 
+            // ── AUTO-BACKUP every 5 minutes ──────────────────────────
+            {
+                let state_for_backup = state_for_start.clone();
+                let backup_path = get_backup_path();
+
+                glib::timeout_add_seconds_local(60, move || {
+                    let s = state_for_backup.borrow();
+
+                    if !s.timer_running || s.exam_ended {
+                        return glib::ControlFlow::Break;
+                    }
+
+                    let md = export_to_markdown(&s);
+                    drop(s);
+
+                    match std::fs::write(&backup_path, md.as_bytes()) {
+                        Ok(_) => eprintln!("[auto-backup] Saved → {:?}", backup_path),
+                        Err(e) => eprintln!("[auto-backup] Write failed: {e}"),
+                    }
+
+                    glib::ControlFlow::Continue
+                });
+            }
+            // ─────────────────────────────────────────────────────────
+
             // Open student-facing exam window and keep a handle to it
             let ew = crate::ui::exam_window::open(&app_for_start, state_for_start.clone());
             *exam_window_for_start.borrow_mut() = Some(ew);
@@ -213,12 +267,12 @@ pub fn build(app: &Application, state: Rc<RefCell<AppState>>) {
 
     // ─── END EXAM ─────────────────────────────────────────────
     {
-        let state_for_end        = state.clone();
-        let window_for_end       = window.clone();
-        let app_for_end          = app.clone();
-        let start_btn_clone      = start_btn.clone();
-        let end_btn_clone        = end_btn.clone();
-        let exam_window_for_end  = exam_window_handle.clone();
+        let state_for_end = state.clone();
+        let window_for_end = window.clone();
+        let app_for_end = app.clone();
+        let start_btn_clone = start_btn.clone();
+        let end_btn_clone = end_btn.clone();
+        let exam_window_for_end = exam_window_handle.clone();
 
         end_btn.connect_clicked(move |_| {
             show_end_exam_dialog(
@@ -257,7 +311,7 @@ fn show_end_exam_dialog(
     dialog.set_response_appearance("export_end", ResponseAppearance::Destructive);
 
     let home_window = home_window.clone();
-    let app         = app.clone();
+    let app = app.clone();
 
     dialog.connect_response(None, move |dlg, response| {
         dlg.close();
@@ -274,13 +328,16 @@ fn show_end_exam_dialog(
             }
         }
 
-        let md                   = export_to_markdown(&state.borrow());
-        let state_for_save       = state.clone();
+        // Mark exam as ended — backup timer will now stop on next tick
+        let backup_path = get_backup_path();
+
+        let md = export_to_markdown(&state.borrow());
+        let state_for_save = state.clone();
         let home_window_for_save = home_window.clone();
-        let app_for_save         = app.clone();
-        let start_btn_for_save   = start_btn.clone();
-        let end_btn_for_save     = end_btn.clone();
-        let exam_win_for_save    = exam_window_handle.clone();
+        let app_for_save = app.clone();
+        let start_btn_for_save = start_btn.clone();
+        let end_btn_for_save = end_btn.clone();
+        let exam_win_for_save = exam_window_handle.clone();
 
         // on_saved callback — only runs after a successful file write
         let on_saved = move || {
@@ -302,7 +359,7 @@ fn show_end_exam_dialog(
             crate::ui::home::build(&app_for_save, state_for_save.clone());
         };
 
-        open_save_dialog(&home_window, md, Some(Rc::new(on_saved)));
+        open_save_dialog(&home_window, md, Some(Rc::new(on_saved)), Some(backup_path));
     });
 
     dialog.present();
@@ -346,18 +403,29 @@ fn show_error_dialog(window: &ApplicationWindow, msg: &str) {
     dialog.present();
 }
 
-/// Open a native save-file dialog and write the markdown content to the chosen path.
-/// `on_saved` is called only after a successful write (used by End Exam to trigger reset).
+/// Open a native save-file dialog pre-pointed at the backup folder on the Desktop.
+/// If the user confirms, the file is written there — replacing the auto-backup.
+/// `on_saved` is called only after a successful file write.
 /// When `on_saved` is None (mid-exam export) nothing extra happens after saving.
 fn open_save_dialog(
     window: &ApplicationWindow,
     md: String,
     on_saved: Option<Rc<dyn Fn()>>,
+    initial_path: Option<std::path::PathBuf>, // pre-fills the save dialog location
 ) {
-    let dialog = FileDialog::builder()
+    let mut dialog_builder = FileDialog::builder()
         .title("Export Exam Report")
-        .initial_name("exam_report.md")
-        .build();
+        .initial_name("exam_report.md");
+
+    // Pre-open the dialog at the backup folder on Desktop
+    if let Some(ref path) = initial_path {
+        if let Some(parent) = path.parent() {
+            let folder = gtk::gio::File::for_path(parent);
+            dialog_builder = dialog_builder.initial_folder(&folder);
+        }
+    }
+
+    let dialog = dialog_builder.build();
 
     let window_ref = window.clone();
     dialog.save(
