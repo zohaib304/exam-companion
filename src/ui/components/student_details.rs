@@ -7,7 +7,10 @@ use crate::models::exam_event::EventKind;
 
 
 /// Returns (card_widget, on_student_selected_callback)
-pub fn build(state: Rc<RefCell<AppState>>) -> (Box, impl Fn(Option<usize>) + 'static) {
+pub fn build(
+    state: Rc<RefCell<AppState>>,
+    on_student_restroom_changed: Rc<dyn Fn(usize)>,
+) -> (Box, impl Fn(Option<usize>) + 'static) {
     let name_label = Label::builder()
         .label("Select a student")
         .halign(gtk::Align::Start)
@@ -24,6 +27,13 @@ pub fn build(state: Rc<RefCell<AppState>>) -> (Box, impl Fn(Option<usize>) + 'st
     let restroom_toggle = CheckButton::builder()
         .label("In Restroom")
         .sensitive(false)
+        .build();
+
+    let restroom_time_label = Label::builder()
+        .label("")
+        .halign(gtk::Align::Start)
+        .css_classes(["dim-label", "caption"])
+        .visible(false)
         .build();
 
     let notes_title = Label::builder()
@@ -76,6 +86,7 @@ pub fn build(state: Rc<RefCell<AppState>>) -> (Box, impl Fn(Option<usize>) + 'st
     inner.append(&name_label);
     inner.append(&meta_label);
     inner.append(&restroom_toggle);
+    inner.append(&restroom_time_label);
     inner.append(&notes_title);
     inner.append(&input_row);
     inner.append(&notes_list);
@@ -88,15 +99,16 @@ pub fn build(state: Rc<RefCell<AppState>>) -> (Box, impl Fn(Option<usize>) + 'st
 
     // ── refresh_details closure ───────────────────────────────
     let refresh = {
-        let state          = state.clone();
-        let selected       = selected.clone();
-        let name_label     = name_label.clone();
-        let meta_label     = meta_label.clone();
-        let restroom_toggle = restroom_toggle.clone();
-        let notes_list     = notes_list.clone();
-        let note_entry     = note_entry.clone();
-        let add_btn        = add_btn.clone();
-        let updating       = updating.clone();
+        let state               = state.clone();
+        let selected            = selected.clone();
+        let name_label          = name_label.clone();
+        let meta_label          = meta_label.clone();
+        let restroom_toggle     = restroom_toggle.clone();
+        let restroom_time_label = restroom_time_label.clone();
+        let notes_list          = notes_list.clone();
+        let note_entry          = note_entry.clone();
+        let add_btn             = add_btn.clone();
+        let updating            = updating.clone();
         Rc::new(move || {
             updating.set(true);
             let s = state.borrow();
@@ -108,6 +120,20 @@ pub fn build(state: Rc<RefCell<AppState>>) -> (Box, impl Fn(Option<usize>) + 'st
                     ));
                     restroom_toggle.set_sensitive(true);
                     restroom_toggle.set_active(student.in_restroom);
+                    if let Some(entered_at) = student.restroom_entered_at {
+                        let elapsed = chrono::Local::now()
+                            .signed_duration_since(entered_at)
+                            .num_minutes();
+                        restroom_time_label.set_text(&format!(
+                            "Out since {} ({} min ago)",
+                            entered_at.format("%H:%M"),
+                            elapsed
+                        ));
+                        restroom_time_label.set_visible(true);
+                    } else {
+                        restroom_time_label.set_text("");
+                        restroom_time_label.set_visible(false);
+                    }
                     while let Some(c) = notes_list.first_child() { notes_list.remove(&c); }
                     for note in &student.notes {
                         append_student_note_row(&notes_list, note, state.clone(), idx);
@@ -122,6 +148,8 @@ pub fn build(state: Rc<RefCell<AppState>>) -> (Box, impl Fn(Option<usize>) + 'st
             meta_label.set_text("Student details will appear here.");
             restroom_toggle.set_active(false);
             restroom_toggle.set_sensitive(false);
+            restroom_time_label.set_text("");
+            restroom_time_label.set_visible(false);
             while let Some(c) = notes_list.first_child() { notes_list.remove(&c); }
             note_entry.set_text("");
             add_btn.set_sensitive(false);
@@ -138,22 +166,57 @@ pub fn build(state: Rc<RefCell<AppState>>) -> (Box, impl Fn(Option<usize>) + 'st
         restroom_toggle.connect_toggled(move |toggle| {
             if updating.get() { return; }
             if let Some(idx) = *selected.borrow() {
-                let mut s = state.borrow_mut();
-                if let Some(student) = s.students.get_mut(idx) {
-                    let is_in = toggle.is_active();
-                    student.in_restroom = is_in;
-                    let event = if is_in {
-                        EventKind::StudentEnteredRestroom {
-                            name: student.name.clone(),
-                            matriculation_number: student.matriculation_number.clone(),
+                // Collect everything we need before any moves
+                let (event, notify) = {
+                    let mut s = state.borrow_mut();
+                    if let Some(student) = s.students.get_mut(idx) {
+                        let is_in = toggle.is_active();
+                        student.in_restroom = is_in;
+                        if is_in {
+                            student.restroom_entered_at = Some(chrono::Local::now());
+                        } else {
+                            student.restroom_entered_at = None;
                         }
+                        let event = if is_in {
+                            EventKind::StudentEnteredRestroom {
+                                name: student.name.clone(),
+                                matriculation_number: student.matriculation_number.clone(),
+                            }
+                        } else {
+                            EventKind::StudentLeftRestroom {
+                                name: student.name.clone(),
+                                matriculation_number: student.matriculation_number.clone(),
+                            }
+                        };
+                        let notify = if is_in {
+                            Some((student.name.clone(), student.restroom_entered_at.unwrap()))
+                        } else {
+                            None
+                        };
+                        s.log_event(event);
+                        (true, notify)
                     } else {
-                        EventKind::StudentLeftRestroom {
-                            name: student.name.clone(),
-                            matriculation_number: student.matriculation_number.clone(),
-                        }
-                    };
-                    s.log_event(event);
+                        (false, None)
+                    }
+                };
+
+                if event {
+                    on_student_restroom_changed(idx);
+                    if let Some((name, entered_at)) = notify {
+                        let entered_str = entered_at.format("%H:%M").to_string();
+                        let dialog = adw::MessageDialog::builder()
+                            .heading("Student Left for Restroom")
+                            .body(&format!(
+                                "{} left at {}.\nPlease notify the incharge outside.",
+                                name, entered_str
+                            ))
+                            .build();
+                        dialog.add_response("ok", "OK");
+                        dialog.connect_response(None, |dlg, _| {
+                            dlg.close();
+                        });
+                        dialog.present();
+                    }
                 }
             }
             refresh();
@@ -174,8 +237,7 @@ pub fn build(state: Rc<RefCell<AppState>>) -> (Box, impl Fn(Option<usize>) + 'st
                     let mut s = state.borrow_mut();
                     if let Some(student) = s.students.get_mut(idx) {
                         student.notes.push(text.clone());
-                        // Clone what we need before calling log_event to avoid double-borrow
-                        let name = student.name.clone();
+                        let name  = student.name.clone();
                         let matno = student.matriculation_number.clone();
                         let _ = student;
                         s.log_event(EventKind::StudentNoteAdded {
@@ -189,7 +251,7 @@ pub fn build(state: Rc<RefCell<AppState>>) -> (Box, impl Fn(Option<usize>) + 'st
                 entry_ref.set_text("");
             }
         });
-        let add_btn_cb  = add.clone();
+        let add_btn_cb   = add.clone();
         add_btn.connect_clicked(move |_| add_btn_cb());
         let add_entry_cb = add.clone();
         note_entry.connect_activate(move |_| add_entry_cb());
